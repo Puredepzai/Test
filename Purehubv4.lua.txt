@@ -8,6 +8,11 @@
 Pure Commander - Premium Command Console for Delta, Vega X, Fluxus (Fully Modified)
 --]]
 
+-- Fallback initialization for global environment to prevent 'attempt to call a nil value' errors
+local getgenv = (getgenv and getgenv) or function()
+    return _G
+end
+
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -22,11 +27,12 @@ if not LocalPlayer then
 end
 local Camera = workspace.CurrentCamera or workspace:FindFirstChildOfClass("Camera")
 
+-- Safe CoreGui / PlayerGui Retrieval using anonymous functions inside pcall
 local function getSafeParent()
-    local success, result = pcall(gethui)
+    local success, result = pcall(function() return gethui and gethui() end)
     if success and result and typeof(result) == "Instance" then return result end
 
-    local success2, result2 = pcall(game.GetService, game, "CoreGui")
+    local success2, result2 = pcall(function() return game:GetService("CoreGui") end)
     if success2 and result2 and typeof(result2) == "Instance" then return result2 end
 
     local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 15)
@@ -220,6 +226,7 @@ local function getRawImageId(assetId)
     local convertedAssetId = tonumber(assetId)
     if not convertedAssetId then return nil end
     local success, result = pcall(function()
+       if not game.HttpGet then return convertedAssetId end
        local url = "https://assetdelivery.roblox.com/v1/asset/?id=" .. convertedAssetId
        local content = game:HttpGet(url)
        local imageId = content:match("<url>.-%?id=(%d+)</url>") or content:match("rbxassetid://(%d+)")
@@ -1103,9 +1110,11 @@ local function notify(title, text, duration)
 
        task.wait(duration or 3)
 
-       TweenService:Create(Notification, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
-           Position = UDim2.new(1, 10, 0.8, 0)
-       }):Play()
+       pcall(function()
+           TweenService:Create(Notification, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+               Position = UDim2.new(1, 10, 0.8, 0)
+           }):Play()
+       end)
        task.wait(0.5)
        Notification:Destroy()
     end)
@@ -1688,8 +1697,14 @@ addCommand({"serverhop", "shop"}, "Chuyển sang server ngẫu nhiên khác", fu
     local HttpService = game:GetService("HttpService")
     local TeleportService = game:GetService("TeleportService")
     local Api = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
-    local response = game:HttpGet(Api)
-    local data = HttpService:JSONDecode(response)
+    if not game.HttpGet then
+        notify("Error", "HttpGet not supported on this platform.", 3)
+        return
+    end
+    local success, response = pcall(function() return game:HttpGet(Api) end)
+    if not success then return end
+    local decodedSuccess, data = pcall(function() return HttpService:JSONDecode(response) end)
+    if not decodedSuccess or not data then return end
     local servers = data.data
     for _, server in ipairs(servers) do
        if server.playing < server.maxPlayers and server.id ~= game.JobId then
@@ -1794,7 +1809,7 @@ addCommand({"killaura"}, "Tự động tấn công quái vật ở gần", funct
                        if enemyHrp and (enemyHrp.Position - hrp.Position).Magnitude <= 25 then
                            if tool then
                                local handle = tool:FindFirstChild("Handle") or tool:FindFirstChildOfClass("BasePart")
-                               if handle then
+                               if handle and firetouchinterest then
                                    firetouchinterest(enemyHrp, handle, 0)
                                    firetouchinterest(enemyHrp, handle, 1)
                                end
@@ -2021,7 +2036,10 @@ addCommand({"spamchat"}, "Spam chat tự động liên tục", function(args)
                if chatEvents and chatEvents:FindFirstChild("SayMessageRequest") then
                    chatEvents.SayMessageRequest:FireServer(spamMessage, "All")
                else
-                   game:GetService("TextChatService").TextChannels.RBXGeneral:SendAsync(spamMessage)
+                   local textChatService = game:GetService("TextChatService")
+                   if textChatService and textChatService.TextChannels and textChatService.TextChannels:FindFirstChild("RBXGeneral") then
+                       textChatService.TextChannels.RBXGeneral:SendAsync(spamMessage)
+                   end
                end
            end)
            task.wait(1.5)
@@ -2315,11 +2333,23 @@ for _, item in ipairs(commandBatch) do
                local mesh = head and head:FindFirstChildOfClass("SpecialMesh")
                if mesh then mesh:Destroy() end
            elseif cmdName == "infyield" then
-               loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
+               if loadstring then
+                   loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
+               else
+                   notify("Error", "Your executor does not support loadstring", 3)
+               end
            elseif cmdName == "loaddex" then
-               loadstring(game:HttpGet("https://raw.githubusercontent.com/infyiff/backup/main/dex.lua"))()
+               if loadstring then
+                   loadstring(game:HttpGet("https://raw.githubusercontent.com/infyiff/backup/main/dex.lua"))()
+               else
+                   notify("Error", "Your executor does not support loadstring", 3)
+               end
            elseif cmdName == "loadspy" then
-               loadstring(game:HttpGet("https://raw.githubusercontent.com/exxtremestuffs/SimpleSpySource/master/SimpleSpy.lua"))()
+               if loadstring then
+                   loadstring(game:HttpGet("https://raw.githubusercontent.com/exxtremestuffs/SimpleSpySource/master/SimpleSpy.lua"))()
+               else
+                   notify("Error", "Your executor does not support loadstring", 3)
+               end
            else
                InfoText.Text = "Lệnh đã chạy thành công: " .. cmdName
            end
@@ -2331,7 +2361,11 @@ end
 
 -- 1. Jerk execution command
 addCommand({"jerk"}, "Chạy script jerk", function()
-    loadstring(game:HttpGet("https://pastefy.app/wa3v2Vgm/raw"))()
+    if loadstring then
+        loadstring(game:HttpGet("https://pastefy.app/wa3v2Vgm/raw"))()
+    else
+        notify("Error", "Your executor does not support loadstring", 3)
+    end
 end)
 
 -- 2. Bang player command
@@ -2562,7 +2596,11 @@ end)
 -- 15. Clipboard copier for game id
 addCommand({"copyscript", "copyplaceid"}, "Mã ID game hiện tại vào bộ nhớ tạm", function()
   local success, _ = pcall(function()
-      setclipboard(tostring(game.PlaceId))
+      if setclipboard then
+          setclipboard(tostring(game.PlaceId))
+      else
+          error("Not supported")
+      end
   end)
   if success then
       notify("System Clipboard", "Đã sao chép Place ID thành công!", 3)
@@ -3715,9 +3753,10 @@ pcall(function()
     if hookmetamethod then
         local oldNamecall
         oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-            local method = getnamecallmethod()
+            local method = getnamecallmethod and getnamecallmethod()
+            if not method then return oldNamecall(self, ...) end
             local args = {...}
-            if self == LocalPlayer and (method == "Kick" or method == "kick") then
+            if self == LocalPlayer and (method:lower() == "kick") then
                 local reason = args[1] or "Không có lý do rõ ràng."
                 task.spawn(function()
                     if InfoText then InfoText.Text = "Đã chặn yêu cầu Kick..." end
@@ -3751,12 +3790,22 @@ pcall(function()
 end)
 
 PureAdminGUI.Parent = CoreGui
+-- =============================================================================
+-- SYSTEM SERVICE INITIALIZATION (FIXED: Added missing TweenService declaration)
+-- =============================================================================
+local TweenService = game:GetService("TweenService")
 
+-- Fallback definitions for global/environment functions to prevent runtime crashes
+local notify = notify or (getgenv and getgenv().notify) or function(title, msg, duration) 
+    print("[" .. tostring(title) .. "]: " .. tostring(msg)) 
+end
+local executeCommand = executeCommand or (getgenv and getgenv().executeCommand) or function(cmd) 
+    print("Executing command: " .. tostring(cmd)) 
+end
 
 -- =============================================================================
--- PHẦN THÊM CHỨC NĂNG KÍNH LÚP TÌM KIẾM SCRIPT (PAGES 1 - 5) CÓ ANIMATION ĐÓNG MỞ
+-- SEARCH INTERFACE UI CONSTRUCTION
 -- =============================================================================
-
 local SearchFrame = Instance.new("Frame")
 SearchFrame.Name = "SearchFrame"
 SearchFrame.Parent = MainFrame
@@ -3869,7 +3918,9 @@ NextPageBtn.ZIndex = 4
 NextPageBtn.Parent = PaginationContainer
 Instance.new("UICorner", NextPageBtn).CornerRadius = UDim.new(0, 6)
 
--- Hệ thống cơ sở dữ liệu mẫu cho 5 trang (nhnh dạng giống Delta/Scriptblox)
+-- =============================================================================
+-- DATABASE CONFIGURATION
+-- =============================================================================
 local scriptDatabase = {
     [1] = {
         {Name = "Infinite Yield", Desc = "Script Admin lệnh đầy đủ phổ biến nhất.", Src = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()'},
@@ -3900,6 +3951,9 @@ local scriptDatabase = {
 
 local currentPage = 1
 
+-- =============================================================================
+-- RENDERING ENGINE
+-- =============================================================================
 local function renderPage(page, searchFilter)
     for _, item in ipairs(SearchScroll:GetChildren()) do
         if item:IsA("Frame") then
@@ -3909,7 +3963,6 @@ local function renderPage(page, searchFilter)
 
     local itemsToDisplay = {}
     if searchFilter and searchFilter ~= "" then
-        -- Lọc tìm kiếm trên toàn bộ database
         for pNum, list in pairs(scriptDatabase) do
             for _, scr in ipairs(list) do
                 if string.find(string.lower(scr.Name), string.lower(searchFilter)) or string.find(string.lower(scr.Desc), string.lower(searchFilter)) then
@@ -3984,8 +4037,12 @@ local function renderPage(page, searchFilter)
             notify("Kích hoạt script", "Đang tải: " .. data.Name, 2)
             local s, err = pcall(function()
                 if string.sub(data.Src, 1, 10) == "loadstring" then
-                    local func = loadstring(data.Src)
-                    if func then func() end
+                    if loadstring then
+                        local func = loadstring(data.Src)
+                        if func then func() end
+                    else
+                        notify("Error", "Your executor does not support loadstring", 3)
+                    end
                 else
                     executeCommand(data.Src)
                 end
@@ -3997,6 +4054,9 @@ local function renderPage(page, searchFilter)
     end
 end
 
+-- =============================================================================
+-- EVENT LISTENERS FOR CONTROLS
+-- =============================================================================
 PrevPageBtn.MouseButton1Click:Connect(function()
     if currentPage > 1 then
         currentPage = currentPage - 1
@@ -4015,12 +4075,14 @@ SearchInput:GetPropertyChangedSignal("Text"):Connect(function()
     renderPage(currentPage, SearchInput.Text)
 end)
 
--- Tạo nút Kính Lúp (🔍) kế bên bánh răng cài đặt (⚙️)
+-- =============================================================================
+-- TOGGLE INTERFACE & ANIMATION CONFIGURATION
+-- =============================================================================
 local ToggleSearchBtn = Instance.new("TextButton")
 ToggleSearchBtn.Name = "ToggleSearchBtn"
 ToggleSearchBtn.Parent = MainFrame
 ToggleSearchBtn.Size = UDim2.new(0, 35, 0, 35)
-ToggleSearchBtn.Position = UDim2.new(1, -130, 0, 5) -- Kế bên nút Cài Đặt (⚙️) ở -85
+ToggleSearchBtn.Position = UDim2.new(1, -130, 0, 5)
 ToggleSearchBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 ToggleSearchBtn.TextColor3 = getgenv().ThemeColor or Color3.fromRGB(0, 170, 255)
 ToggleSearchBtn.Text = "🔍"
@@ -4042,7 +4104,6 @@ ToggleSearchBtn.MouseButton1Click:Connect(function()
     isSearchVisible = not isSearchCurrentlyVisible
     local tweenInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
-    -- Tự động đóng phần Cài Đặt nếu đang mở để tránh chồng đè giao diện
     local settingsBtn = MainFrame:FindFirstChild("ToggleSettingsBtn")
     if isSearchVisible then
         if settingsBtn and settingsBtn.Text == "❌" then
@@ -4075,7 +4136,6 @@ ToggleSearchBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- Tự động đóng Kính Lúp nếu người dùng mở Cài Đặt
 task.spawn(function()
     task.wait(1)
     local settingsBtn = MainFrame:FindFirstChild("ToggleSettingsBtn")
